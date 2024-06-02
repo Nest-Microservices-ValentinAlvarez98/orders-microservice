@@ -1,0 +1,40 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  DELIVERED
+  CANCELLED
+}
+
+model Order {
+  id String @id @default(uuid())
+
+  totalAmount Float @default(0)
+
+  totalItems Int @default(0)
+
+  status OrderStatus @default(PENDING)
+
+  paid Boolean @default(false)
+
+  // Lo ideal seria no tener que poner el campo paidAt en esta tabla para evitar null values, pero por simplicidad lo dejamos aquí
+  paidAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+}
