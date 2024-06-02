@@ -37,4 +37,20 @@ model Order {
   createdAt DateTime @default(now())
 
   updatedAt DateTime @updatedAt
+
+  OrderItem OrderItem[]
+}
+
+model OrderItem {
+  id String @id @default(uuid())
+
+  // Mucho cuidado porque no tenemos disponible la base de datos de productos, por lo que no podemos hacer referencia a la tabla de productos
+  productId Int
+
+  quantity Int
+
+  price Float
+
+  Order   Order?  @relation(fields: [orderId], references: [id])
+  orderId String?
 }
