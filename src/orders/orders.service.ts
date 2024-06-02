@@ -2,16 +2,14 @@ import { HttpStatus, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/co
 import { PrismaClient } from '@prisma/client';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { ChangeOrderStatusDto, OrderPaginationDto, CreateOrderDto } from './dto';
-import { PRODUCT_SERVICE } from 'src/config';
+import { NATS_SERVICE } from 'src/config';
 import { catchError, firstValueFrom } from 'rxjs';
-import { error } from 'console';
-import { connect } from 'http2';
 
 @Injectable()
 export class OrdersService extends PrismaClient implements OnModuleInit {
 
   constructor(
-    @Inject(PRODUCT_SERVICE) private readonly productService: ClientProxy
+    @Inject(NATS_SERVICE) private readonly client: ClientProxy
   ) {
     super();
   }
@@ -30,7 +28,7 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
 
     // Deberíamos hacer tipado de los productos para evitar errores y facilitar el mantenimiento
     const products: any[] = await firstValueFrom(
-      this.productService.send({
+      this.client.send({
         cmd: 'validate_products'
       }, productsIds).pipe(
         catchError(error => {
@@ -188,7 +186,7 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
     const productsIds = order.OrderItem.map(item => item.productId);
 
     const products: any[] = await firstValueFrom(
-      this.productService.send({
+      this.client.send({
         cmd: 'validate_products'
       }, productsIds).pipe(
         catchError(error => {
