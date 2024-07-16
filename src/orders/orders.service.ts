@@ -1,9 +1,9 @@
 import { HttpStatus, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { PaymentCountry, PaymentCurrency, PrismaClient } from '@prisma/client';
 import { ClientProxy, RpcException } from '@nestjs/microservices';
 import { ChangeOrderStatusDto, OrderPaginationDto, CreateOrderDto } from './dto';
 import { NATS_SERVICE } from 'src/config';
-import { catchError, firstValueFrom } from 'rxjs';
+import { catchError, firstValueFrom, last } from 'rxjs';
 
 @Injectable()
 export class OrdersService extends PrismaClient implements OnModuleInit {
@@ -14,80 +14,45 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
     super();
   }
 
-  private readonly logger = new Logger('OrdersService')
+  private readonly logger = new Logger(OrdersService.name)
 
   async onModuleInit() {
     await this.$connect();
-    this.logger.log('Database connection has been established.')
+    this.logger.log(`${OrdersService.name} connected to the database.`)
   }
 
-  async create(createOrderDto: CreateOrderDto) {
+  async create(email: string, createOrderDto: CreateOrderDto) {
 
-    // 1. Confirmar los ids de los productos
     const productsIds = createOrderDto.items.map(item => item.productId);
 
-    // Deberíamos hacer tipado de los productos para evitar errores y facilitar el mantenimiento
-    const products: any[] = await firstValueFrom(
-      this.client.send({
-        cmd: 'validate_products'
-      }, productsIds).pipe(
-        catchError(error => {
-          throw new RpcException({
-            statusCode: HttpStatus.BAD_REQUEST,
-            message: `Error: ${error.message}, check logs for more details.`
-          })
-        })
-      )
-    )
+    const products = await this.validateProducts(productsIds);
 
-    // 2. Cálculo de los valores totales
-    const totalAmount = createOrderDto.items.reduce((acc, orderItem) => {
+    const { totalAmount, totalItems } = await this.calculateTotals(createOrderDto.items);
 
-      // Tomamos el precio del producto para evitar que el precio sea modificado durante la comunicación
-      const price = products.find(
-        (product) => product.id === orderItem.productId
-      ).price
-
-      return acc + price * orderItem.quantity
-
-    }, 0)
-
-    const totalItems = createOrderDto.items.reduce((acc, orderItem) => {
-
-      return acc + orderItem.quantity
-
-    }, 0)
-
-    // 3. Crear una transacción de base de datos
     const transactionResult = await this.$transaction(async (prisma) => {
 
-      // Crear la orden
       const order = await prisma.order.create({
         data: {
           totalAmount: totalAmount,
           totalItems: totalItems,
-        }
-      }
-      );
+          contact_email: email,
+        },
+      });
 
-      // Crear los items de la orden
       const orderItems = createOrderDto.items.map((item) => ({
         productId: item.productId,
+        name: products.find(product => product.id === item.productId).name,
         quantity: item.quantity,
         price: products.find(product => product.id === item.productId).price,
         orderId: order.id
-      }))
+      }));
 
-      await prisma.orderItem.createMany({
-        data: orderItems
-      })
+      await prisma.orderItem.createMany({ data: orderItems });
 
-      const orderCreated = await prisma.order.findFirst({
-        where: {
-          id: order.id
-        },
+      const orderCreated = await prisma.order.findUnique({
+        where: { id: order.id },
         include: {
-          OrderItem: {
+          Items: {
             select: {
               productId: true,
               quantity: true,
@@ -95,27 +60,49 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
             }
           }
         }
-      })
+      });
 
-      return {
-        ...orderCreated,
-        OrderItem: orderCreated.OrderItem.map((item) => ({
-          ...item,
-          name: products.find(product => product.id === item.productId).name
-        }))
-      }
+      return orderCreated;
 
-    })
+    });
 
-    // 4. Retornar la respuesta
+    return transactionResult;
+
+  }
+
+  async validateProducts(productsIds: number[]) {
+
+    const products: any[] = await firstValueFrom(
+      this.client.send({ cmd: 'validate_products' }, productsIds).pipe(
+        catchError(error => {
+          throw new RpcException({
+            statusCode: HttpStatus.BAD_REQUEST,
+            message: `Error: ${error.message}, check logs for more details.`
+          });
+        })
+      )
+    );
+
+    return products;
+
+  }
+
+  async calculateTotals(orderItems: any[]) {
+
+    const productsIds = orderItems.map(item => item.productId);
+
+    const products = await this.validateProducts(productsIds);
+
+    const totalAmount: number = orderItems.reduce((acc, orderItem) => {
+      const price = products.find(product => product.id === orderItem.productId).price;
+      return acc + price * orderItem.quantity;
+    }, 0);
+
+    const totalItems: number = orderItems.reduce((acc, orderItem) => acc + orderItem.quantity, 0);
+
     return {
-      service: 'Orders Microservices',
-      createOrderDto: createOrderDto,
-      ids: productsIds,
-      products: products,
       totalAmount: totalAmount,
-      totalItems: totalItems,
-      order: transactionResult
+      totalItems: totalItems
     }
 
   }
@@ -165,7 +152,7 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
         id
       },
       include: {
-        OrderItem: {
+        Items: {
           select: {
             productId: true,
             quantity: true,
@@ -174,16 +161,16 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
         }
       },
 
-    })
+    });
 
     if (!order) {
       throw new RpcException({
         statusCode: HttpStatus.NOT_FOUND,
         message: `Order with id ${id} not found.`
       })
-    }
+    };
 
-    const productsIds = order.OrderItem.map(item => item.productId);
+    const productsIds = order.Items.map(item => item.productId);
 
     const products: any[] = await firstValueFrom(
       this.client.send({
@@ -196,14 +183,97 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
           })
         })
       )
-    )
+    );
 
-    order.OrderItem = order.OrderItem.map((item) => ({
+    order.Items = order.Items.map((item) => ({
       ...item,
       name: products.find(product => product.id === item.productId).name,
     }));
 
     return order;
+
+  }
+
+  async findReceipt(id: string) {
+
+    const findResult = await this.orderReceipt.findUnique({
+      where: {
+        order_id: id
+      },
+      include: {
+        payment: true,
+        order: {
+          include: {
+            Items: {
+              select: {
+                productId: true,
+                quantity: true,
+                name: true,
+                price: true
+              }
+            }
+          }
+        }
+      }
+    })
+
+    console.log('findResult', findResult)
+
+    if (!findResult) {
+
+      // Esperar a que se cree el recibo en la base de datos
+      await new Promise((resolve) => {
+        setTimeout(resolve, 5000)
+      })
+
+      const findResult = await this.orderReceipt.findUnique({
+        where: {
+          order_id: id
+        },
+        include: {
+          payment: true,
+          order: {
+            include: {
+              Items: {
+                select: {
+                  productId: true,
+                  quantity: true,
+                  name: true,
+                  price: true
+                }
+              }
+            }
+          }
+        }
+      })
+
+      if (!findResult) {
+        throw new RpcException({
+          statusCode: HttpStatus.NOT_FOUND,
+          message: `Receipt for order with id ${id} not found.`
+        })
+      }
+
+    }
+
+
+    const receipt = {
+      name: findResult.payment.name,
+      amount: findResult.payment.amount,
+      currency: findResult.payment.currency as PaymentCurrency,
+      country: findResult.payment.country as PaymentCountry,
+      description: findResult.payment.description,
+      products: findResult.order.Items.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        price: item.price
+      })),
+      receipt_url: findResult.receipt_url,
+      created_at: findResult.payment.created_at,
+      last_updated: findResult.payment.updated_at
+    }
+
+    return receipt;
 
   }
 
@@ -230,7 +300,5 @@ export class OrdersService extends PrismaClient implements OnModuleInit {
     })
 
   }
-
-
 
 }

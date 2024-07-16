@@ -15,42 +15,123 @@ datasource db {
 
 enum OrderStatus {
   PENDING
-  CONFIRMED
+  PAID
   DELIVERED
   CANCELLED
 }
 
+enum PaymentCurrency {
+  UYU
+  USD
+}
+
+enum PaymentCountry {
+  UY
+  AR
+}
+
+// PaymentStatus
+enum PaymentStatus {
+  PENDING
+  PAID
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentExpirationType {
+  MINUTES
+  HOURS
+  DAYS
+}
+
 model Order {
-  id String @id @default(uuid())
+  id          String      @id @default(uuid())
+  totalAmount Float       @default(0)
+  totalItems  Int         @default(0)
+  status      OrderStatus @default(PENDING)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
 
-  totalAmount Float @default(0)
+  contact_email String
 
-  totalItems Int @default(0)
+  // Relations
+  Items   OrderItem[]
+  Payment Payment[]
+  Receipt OrderReceipt?
 
-  status OrderStatus @default(PENDING)
-
-  paid Boolean @default(false)
-
-  // Lo ideal seria no tener que poner el campo paidAt en esta tabla para evitar null values, pero por simplicidad lo dejamos aquí
-  paidAt DateTime?
-
-  createdAt DateTime @default(now())
-
-  updatedAt DateTime @updatedAt
-
-  OrderItem OrderItem[]
+  // Indexes
+  @@index([status])
+  @@index([createdAt])
+  @@index([contact_email])
 }
 
 model OrderItem {
-  id String @id @default(uuid())
-
-  // Mucho cuidado porque no tenemos disponible la base de datos de productos, por lo que no podemos hacer referencia a la tabla de productos
+  id        String @id @default(uuid())
   productId Int
+  name      String
+  quantity  Int
+  price     Float
+  orderId   String
+  Order     Order  @relation(fields: [orderId], references: [id])
+}
 
-  quantity Int
+model Payment {
+  id               String                @id @default(uuid())
+  name             String
+  currency         PaymentCurrency       @default(UYU)
+  amount           Float
+  country          PaymentCountry        @default(UY)
+  description      String
+  expiration_type  PaymentExpirationType @default(MINUTES)
+  expiration_value Int                   @default(15)
 
-  price Float
+  status PaymentStatus @default(PENDING)
 
-  Order   Order?  @relation(fields: [orderId], references: [id])
-  orderId String?
+  contact_email String
+
+  dlocal_payment_id String? @unique
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  // Relations
+  order    Order  @relation(fields: [order_id], references: [id])
+  order_id String
+
+  receipt OrderReceipt?
+
+  logs PaymentLog[]
+
+  // Indexes
+  @@index([status])
+  @@index([created_at])
+  @@index([contact_email])
+  @@index([dlocal_payment_id])
+  @@index([order_id])
+}
+
+model PaymentLog {
+  id              String        @id @default(uuid())
+  log_description String
+  payment_id      String
+  status          PaymentStatus @default(PENDING)
+  created_at      DateTime      @default(now())
+
+  payment Payment @relation(fields: [payment_id], references: [id])
+}
+
+model OrderReceipt {
+  id          String @id @default(uuid())
+  receipt_url String
+
+  // Relations
+  order    Order  @relation(fields: [order_id], references: [id])
+  order_id String @unique
+
+  payment    Payment @relation(fields: [payment_id], references: [id])
+  payment_id String  @unique
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 }

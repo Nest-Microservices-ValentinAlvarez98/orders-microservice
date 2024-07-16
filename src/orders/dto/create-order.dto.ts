@@ -13,19 +13,4 @@ export class CreateOrderDto {
       @Type(() => OrderItemDto)
       items: OrderItemDto[]
 
-
-      /* @IsNumber()
-      @IsPositive()
-      totalAmount: number;
-
-      @IsNumber()
-      @IsPositive()
-      totalItems: number;
-
-      @IsEnum(OrderStatusList, {
-            message: `Possible status values are ${OrderStatusList.join(", ")}`
-      })
-      @IsOptional()
-      status?: OrderStatus = OrderStatus.PENDING; */
-
 }
